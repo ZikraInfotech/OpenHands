@@ -1,0 +1,7 @@
+--- a/openhands/runtime/impl/docker/docker_runtime.py
++++ b/openhands/runtime/impl/docker/docker_runtime.py
+@@
+-        vscode_url = f'http://localhost:{self._vscode_port}/?tkn={token}&folder={self.config.workspace_mount_path_in_sandbox}'
++        public_host = os.getenv('PUBLIC_HOSTNAME', f'vscode-{self.container_name}.example.com')
++        vscode_url = f'https://{public_host}/?tkn={token}&folder={self.config.workspace_mount_path_in_sandbox}'
+         return vscode_url

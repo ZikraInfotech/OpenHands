@@ -1,0 +1,17 @@
+flowchart TD
+  subgraph ControlPlane
+    Auth
+    Billing
+    Orchestrator
+  end
+  subgraph DataPlane
+    RuntimePod
+    VSCodeGateway
+    PreviewGateway
+  end
+  User --> Auth
+  User --> PreviewGateway
+  User --> VSCodeGateway
+  Orchestrator --> RuntimePod
+  RuntimePod --> VSCodeGateway
+  RuntimePod --> PreviewGateway

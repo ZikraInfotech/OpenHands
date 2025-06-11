@@ -1,0 +1,13 @@
+--- a/openhands/runtime/impl/local/local_runtime.py
++++ b/openhands/runtime/impl/local/local_runtime.py
+@@
+-        if 'localhost' in runtime_url:
+-            vscode_url = f'{self.runtime_url}:{self._vscode_port}'
+-        else:
+-            # Similar to remote runtime...
+-            parsed_url = urlparse(runtime_url)
+-            vscode_url = f'{parsed_url.scheme}://vscode-{parsed_url.netloc}'
++        parsed_url = urlparse(runtime_url)
++        host = os.getenv('PUBLIC_HOSTNAME', f'vscode-{parsed_url.netloc}')
++        vscode_url = f'{parsed_url.scheme}://{host}'
+         return f'{vscode_url}/?tkn={token}&folder={self.config.workspace_mount_path_in_sandbox}'

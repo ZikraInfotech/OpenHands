@@ -1,0 +1,18 @@
+--- a/frontend/src/entry.client.tsx
++++ b/frontend/src/entry.client.tsx
+@@
+-  const [posthogClientKey, setPosthogClientKey] = React.useState<string | null>(
+-    null
+-  );
++  const [posthogClientKey, setPosthogClientKey] = React.useState<string | null>(
++    process.env.POSTHOG_CLIENT_KEY || null
++  );
+@@
+-    if (posthogClientKey) {
+-      posthog.init(posthogClientKey, {
++    if (posthogClientKey) {
++      posthog.init(posthogClientKey, {
+         api_host: "https://us.i.posthog.com",
+       });
+     }
+   }, [posthogClientKey]);
