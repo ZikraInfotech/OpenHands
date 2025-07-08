@@ -25,6 +25,7 @@ from openhands.events.observation import (
     Observation,
 )
 from openhands.events.serialization import event_to_dict, observation_from_dict
+from openhands.integrations.provider import PROVIDER_TOKEN_TYPE
 from openhands.runtime.impl.action_execution.action_execution_client import (
     ActionExecutionClient,
 )
@@ -35,6 +36,7 @@ from openhands.runtime.impl.docker.docker_runtime import (
     VSCODE_PORT_RANGE,
 )
 from openhands.runtime.plugins import PluginRequirement
+from openhands.runtime.runtime_status import RuntimeStatus
 from openhands.runtime.utils import find_available_tcp_port
 from openhands.runtime.utils.command import get_action_execution_server_startup_command
 from openhands.utils.async_utils import call_sync_from_async
@@ -71,21 +73,16 @@ def get_user_info() -> tuple[int, str | None]:
         return os.getuid(), username
 
 
-def check_dependencies(code_repo_path: str, poetry_venvs_path: str) -> None:
+def check_dependencies(code_repo_path: str, check_browser: bool) -> None:
     ERROR_MESSAGE = 'Please follow the instructions in https://github.com/All-Hands-AI/OpenHands/blob/main/Development.md to install OpenHands.'
     if not os.path.exists(code_repo_path):
         raise ValueError(
             f'Code repo path {code_repo_path} does not exist. ' + ERROR_MESSAGE
         )
-    if not os.path.exists(poetry_venvs_path):
-        raise ValueError(
-            f'Poetry venvs path {poetry_venvs_path} does not exist. ' + ERROR_MESSAGE
-        )
     # Check jupyter is installed
     logger.debug('Checking dependencies: Jupyter')
     output = subprocess.check_output(
-        'poetry run jupyter --version',
-        shell=True,
+        [sys.executable, '-m', 'jupyter', '--version'],
         text=True,
         cwd=code_repo_path,
     )
@@ -94,7 +91,6 @@ def check_dependencies(code_repo_path: str, poetry_venvs_path: str) -> None:
         raise ValueError('Jupyter is not properly installed. ' + ERROR_MESSAGE)
 
     # Check libtmux is installed (skip on Windows)
-
     if sys.platform != 'win32':
         logger.debug('Checking dependencies: libtmux')
         import libtmux
@@ -111,15 +107,12 @@ def check_dependencies(code_repo_path: str, poetry_venvs_path: str) -> None:
         if 'test' not in pane_output:
             raise ValueError('libtmux is not properly installed. ' + ERROR_MESSAGE)
 
-    # Skip browser environment check on Windows
-    if sys.platform != 'win32':
+    if check_browser:
         logger.debug('Checking dependencies: browser')
         from openhands.runtime.browser.browser_env import BrowserEnv
 
         browser = BrowserEnv()
         browser.close()
-    else:
-        logger.warning('Running on Windows - browser environment check skipped.')
 
 
 class LocalRuntime(ActionExecutionClient):
@@ -144,6 +137,8 @@ class LocalRuntime(ActionExecutionClient):
         status_callback: Callable[[str, str, str], None] | None = None,
         attach_to_existing: bool = False,
         headless_mode: bool = True,
+        user_id: str | None = None,
+        git_provider_tokens: PROVIDER_TOKEN_TYPE | None = None,
     ) -> None:
         self.is_windows = sys.platform == 'win32'
         if self.is_windows:
@@ -193,6 +188,8 @@ class LocalRuntime(ActionExecutionClient):
             status_callback,
             attach_to_existing,
             headless_mode,
+            user_id,
+            git_provider_tokens,
         )
 
         # If there is an API key in the environment we use this in requests to the runtime
@@ -206,7 +203,7 @@ class LocalRuntime(ActionExecutionClient):
 
     async def connect(self) -> None:
         """Start the action_execution_server on the local machine or connect to an existing one."""
-        self.send_status_message('STATUS$STARTING_RUNTIME')
+        self.set_runtime_status(RuntimeStatus.STARTING_RUNTIME)
 
         # Check if there's already a server running for this session ID
         if self.sid in _RUNNING_SERVERS:
@@ -282,12 +279,13 @@ class LocalRuntime(ActionExecutionClient):
                 server_port=self._execution_server_port,
                 plugins=self.plugins,
                 app_config=self.config,
-                python_prefix=['poetry', 'run'],
+                python_prefix=[],
+                python_executable=sys.executable,
                 override_user_id=self._user_id,
                 override_username=self._username,
             )
 
-            self.log('debug', f'Starting server with command: {cmd}')
+            self.log('info', f'Starting server with command: {cmd}')
             env = os.environ.copy()
             # Get the code repo path
             code_repo_path = os.path.dirname(os.path.dirname(openhands.__file__))
@@ -301,7 +299,6 @@ class LocalRuntime(ActionExecutionClient):
             # Derive environment paths using sys.executable
             interpreter_path = sys.executable
             python_bin_path = os.path.dirname(interpreter_path)
-            env_root_path = os.path.dirname(python_bin_path)
 
             # Prepend the interpreter's bin directory to PATH for subprocesses
             env['PATH'] = f'{python_bin_path}{os.pathsep}{env.get("PATH", "")}'
@@ -309,7 +306,8 @@ class LocalRuntime(ActionExecutionClient):
 
             # Check dependencies using the derived env_root_path if not skipped
             if os.getenv('SKIP_DEPENDENCY_CHECK', '') != '1':
-                check_dependencies(code_repo_path, env_root_path)
+                check_browser = self.config.enable_browser and sys.platform != 'win32'
+                check_dependencies(code_repo_path, check_browser)
 
             self.server_process = subprocess.Popen(  # noqa: S603
                 cmd,
@@ -383,7 +381,7 @@ class LocalRuntime(ActionExecutionClient):
             )
 
         self.log('info', f'Waiting for server to become ready at {self.api_url}...')
-        self.send_status_message('STATUS$WAITING_FOR_CLIENT')
+        self.set_runtime_status(RuntimeStatus.STARTING_RUNTIME)
 
         await call_sync_from_async(self._wait_until_alive)
 
@@ -395,7 +393,7 @@ class LocalRuntime(ActionExecutionClient):
             f'Server initialized with plugins: {[plugin.name for plugin in self.plugins]}',
         )
         if not self.attach_to_existing:
-            self.send_status_message(' ')
+            self.set_runtime_status(RuntimeStatus.READY)
         self._runtime_initialized = True
 
     def _find_available_port(
